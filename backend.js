@@ -74,7 +74,7 @@ function main() {
 	var server = restify.createServer();
 	server.get('/address/:user/:authKey', webGetAddress);
 
-	server.listen(3001, function() {
+	server.listen(3001, '127.0.0.1', function() {
 		console.log('%s listening at %s', server.name, server.url);
 	});
 	pool = mysql.createPool({
