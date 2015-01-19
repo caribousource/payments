@@ -1,9 +1,13 @@
+var fs = require('fs');
 var restify = require('restify');
 var bitcoin = require('bitcoinjs-lib');
 var mysql = require('mysql');
+var openpgp = require('openpgp');
 
 var config = require('./config');
+var encryptKey;
 var pool;
+
 function webGetAddress(req, res, next) {
 	var userName = req.params.user;
 	var authKey = req.params.authKey;
@@ -30,17 +34,15 @@ function webGetAddress(req, res, next) {
 }
 
 function getAddress(userName, authKey, cb) {
-	pool.query('SELECT btckey FROM users WHERE username = ? AND authkey = ?', [userName, authKey], function(err, rows) {
+	pool.query('SELECT btc_address FROM users WHERE username = ? AND authkey = ?', [userName, authKey], function(err, rows) {
 		if(err || rows.length != 1) {
 			cb(err, null);
 		}
 		if(rows.length == 1) {
-			var keyWIF = rows[0].btckey;
-			if(!keyWIF) {
+			var address = rows[0].btc_address;
+			if(!address) {
 				createKey(userName, authKey, cb);
 			} else {
-				var btcKey = bitcoin.ECKey.fromWIF(keyWIF);
-				var address = formatAddress(btcKey);
 				cb(null, address);
 			}
 		}
@@ -49,15 +51,24 @@ function getAddress(userName, authKey, cb) {
 
 function createKey(userName, authKey, cb) {
 	var btcKey = bitcoin.ECKey.makeRandom();
-	var keyWIF;
 	var keyWIF = btcKey.toWIF();
 	var address = formatAddress(btcKey);
-	pool.query('UPDATE users SET btckey = ? WHERE username = ? AND authkey = ?', [keyWIF, userName, authKey], function(err, result) {
+	pool.query('UPDATE users SET btc_address = ? WHERE username = ? AND authkey = ?', [address, userName, authKey], function(err, result) {
 		if(err || result.affectedRows != 1) {
 			cb(err, null);
 		}
 		else if(result.affectedRows == 1) {
-			cb(err, address);
+			var encryptedMessage = openpgp.encryptMessage(encryptKey.keys, keyWIF.toString()).then(function(message) {
+				fs.writeFile(userName + '.key.asc', message, { flag: 'w+' }, function(err) {
+					if(err) {
+						cb(err, null);
+					} else {
+						cb(null, address);
+					}
+				})
+			}).catch(function(err) {
+				cb(err, null);
+			});
 		}
 	});
 }
@@ -85,6 +96,8 @@ function main() {
 		password: config.mysqlPassword,
 		database: config.mysqlDatabase,
 	});
+	var pgpKey = fs.readFileSync(config.pgpKey);
+	encryptKey = openpgp.key.readArmored(pgpKey.toString('utf-8'));
 }
 
 main();
